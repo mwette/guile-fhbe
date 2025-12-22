@@ -62,7 +62,7 @@
 (define (header)
   `(begin
      (use-modules (bstructs))
-     (define-syntax-rule (ev (spec ...))
+     (define-syntax-rule (in-bstructs (spec ...))
        (let () (define-bstruct <@@> (spec ...)) <@@>))
      (define (obj-type obj)
        ((@@ (bstructs) bstruct-descriptor-name) (struct-vtable obj)))
@@ -141,24 +141,24 @@
     (else (no-base name))))
 
 (define (array type dim)
-  `(ev (vector ,dim ,type)))
+  `(in-bstructs (vector ,dim ,type)))
 
 (define (pointer type)
   (if (eq? type 'void)
-      `(ev (* void))
-      `(ev (* ,type))))
+      `(in-bstructs (* void))
+      `(in-bstructs (* ,type))))
 
 (define* (struct fields #:optional packed)
   (let ((flds (map (lambda (f)
                      (if (pair? (cadr f)) (cons (car f) (cadr f)) f))
                    fields)))
-    `(ev (struct (list ,@flds)))))
+    `(in-bstructs (struct (list ,@flds)))))
 
 (define* (union fields #:optional packed)
   (let ((flds (map (lambda (f)
                      (if (pair? (cadr f)) (cons (car f) (cadr f)) f))
                    fields)))
-    `(ev (struct (list ,@flds)))))
+    `(in-bstructs (struct (list ,@flds)))))
 
 ;; Bitfields will be a little tricky.  This code would have to insert padding
 ;; in order to be binary compatible with C libraries.
@@ -167,7 +167,7 @@
 ;;   (struct (a (bits 3 u)) (b (bits 3 u)) (_1 (bits 2 u)) (c (bits 3 u)))
 ;; We would need to do testing to make sure this works.
 (define (bitfield type size)
-  `(ev (bits type size)))
+  `(in-bstructs (bits type size)))
 
 
 (define backend
