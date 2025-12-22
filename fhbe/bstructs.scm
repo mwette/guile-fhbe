@@ -50,8 +50,13 @@
 (define-module (fhbe bstructs)
   #:export (backend)
   #:use-module (bstructs)
+  #:use-module (ice-9 match)
   #:use-module ((system foreign) #:prefix ffi:)
   #:use-module (nyacc lang c99 fh-utils))
+
+(use-modules (ice-9 pretty-print))
+(define (pp exp) (pretty-print exp #:per-line-prefix "  "))
+(define (sf fmt . args) (apply simple-format #t fmt args))
 
 ;;(define (object-descriptor obj) (struct-vtable obj))
 ;;(define descriptor-name (@@ (bstructs) bstruct-descriptor-name))
@@ -62,13 +67,11 @@
 (define (header)
   `(begin
      (use-modules (bstructs))
-     (define-syntax-rule (in-bstructs (spec ...))
-       (let () (define-bstruct <@@> (spec ...)) <@@>))
      (define (obj-type obj)
        ((@@ (bstructs) bstruct-descriptor-name) (struct-vtable obj)))
      (define-syntax-rule (arg->number arg)
        (cond ((number? arg) arg)
-             ((bstruct? arg) (bstruct-ref (obj-type arg) arg))
+             ;;((bstruct? arg) (bstruct-ref (obj-type arg) arg)) nope
              (else (error "fhbe/bstruct: arg->number: bad arg:" arg))))
      (define-syntax arg->pointer
        (syntax-rules ()
@@ -76,7 +79,7 @@
           (cond ((ffi:pointer? arg) arg)
                 ((string? arg) (ffi:string->pointer arg))
                 ((equal? 0 arg) ffi:%null-pointer)
-                ;;((bstruct? arg) ... )
+                ;;((bstruct? arg) ... ) nope
                 (else (error "fhbe/bstruct: arg->pointer: bad arg:" arg))))
          ((_ arg hint) (arg->pointer arg))))
      (define-syntax-rule (extern-ref obj)
@@ -91,7 +94,7 @@
        (cond
         ((number? arg) arg)
         ((symbol? arg) (,sym->val arg))
-        ((bstruct? arg) (bstruct-ref arg))
+        ;;((bstruct? arg) (bstruct-ref arg)) nope
         (else (error "fhbe/bstruct: type mismatch"))))))
 
 (define (no-base name)
@@ -141,24 +144,52 @@
     (else (no-base name))))
 
 (define (array type dim)
-  `(in-bstructs (vector ,dim ,type)))
+  ;;`(in-bstructs (vector ,dim ,type)))
+  `(vector ,dim ,type))
 
 (define (pointer type)
-  (if (eq? type 'void)
-      `(in-bstructs (* void))
-      `(in-bstructs (* ,type))))
+  (cond
+   ((equal? type ''void) `(* void))
+   ((and (pair? type) (eq? (car type) 'delay)) `(* void))
+   (else `(* ,type))))
 
 (define* (struct fields #:optional packed)
-  (let ((flds (map (lambda (f)
-                     (if (pair? (cadr f)) (cons (car f) (cadr f)) f))
+  (let ((flds (map (match-lambda
+                     (`(,qq (,nm (,uq ,ty))) (list nm ty))
+                     (`(,qq (,nm (,uq ,ty) ,sz)) (list nm `(bits ,sz u))))
                    fields)))
-    `(in-bstructs (struct (list ,@flds)))))
+    `(struct ,@flds)))
 
 (define* (union fields #:optional packed)
-  (let ((flds (map (lambda (f)
-                     (if (pair? (cadr f)) (cons (car f) (cadr f)) f))
+  (let ((flds (map (match-lambda
+                     (`(,qq (,nm (,uq ,ty))) (list nm ty)))
                    fields)))
-    `(in-bstructs (struct (list ,@flds)))))
+    ;;`(in-bstructs (union ,@flds))))
+    `(union ,@flds)))
+
+(define (function pr->pc pc->pr)
+  'void)
+;;`(in-bstructs void))
+
+(define* (enum alist #:optional packed)
+  'int)
+
+(define (deftype name type)
+  `(begin
+     (define-bstruct ,name ,type)
+     (export ,name)))
+
+;;  `(define-public ,name ,type))
+  
+(define* (makeobj type #:optional value)
+  #|
+  (if value
+      (if (pair? value)
+          `(bstruct-alloc ,type ,@value)
+          `(bstruct-alloc ,type ,value))
+      `(bstruct-alloc ,type))
+  |#
+  (or value (if #f #f)))
 
 ;; Bitfields will be a little tricky.  This code would have to insert padding
 ;; in order to be binary compatible with C libraries.
@@ -166,9 +197,10 @@
 ;; ->
 ;;   (struct (a (bits 3 u)) (b (bits 3 u)) (_1 (bits 2 u)) (c (bits 3 u)))
 ;; We would need to do testing to make sure this works.
-(define (bitfield type size)
-  `(in-bstructs (bits type size)))
 
+;; bitfield not used
+(define (bitfield type size)
+  `(in-bstructs (bits ,type ,size)))
 
 (define backend
   (make-fh-backend
@@ -180,17 +212,9 @@
    struct
    bitfield
    union
-   (lambda (pr->pc pc->pr)              ; function
-     `(in-bstructs void))
-   (lambda* (alist #:optional packed)   ; enum
-     `(in-bstructs int))
-   (lambda (name type)                  ; deftype
-     `(define-public ,name ,type))
-   (lambda* (type #:optional value)     ; makeobj
-     (if value
-         (if (pair? value)
-             `(bstruct-alloc ,type ,@value)
-             `(bytestructure ,type ,value))
-         `(bytestructure ,type)))))
+   function
+   enum
+   deftype
+   makeobj))
 
 ;; --- last line ---
