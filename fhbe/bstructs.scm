@@ -181,9 +181,9 @@
    bitfield
    union
    (lambda (pr->pc pc->pr)              ; function
-     (base 'void))
+     `(in-bstructs void))
    (lambda* (alist #:optional packed)   ; enum
-     'int)
+     `(in-bstructs int))
    (lambda (name type)                  ; deftype
      `(define-public ,name ,type))
    (lambda* (type #:optional value)     ; makeobj
