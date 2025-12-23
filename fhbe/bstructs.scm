@@ -91,8 +91,7 @@
      (define-syntax-rule (extern-ref obj)
        (bstruct-ref (obj-type obj) obj '*))
      (define-syntax-rule (extern-set! obj val)
-       (bstruct-set! (obj-type obj) obj '* val))
-     (eval-when (expand load eval) (define backend 'bstructs))))
+       (bstruct-set! (obj-type obj) obj '* val))))
 
 (define (trailer defs)
   (let ((sym->val (or (assq-ref defs 'sym->val) '(const #f))))
