@@ -191,6 +191,7 @@
 
 (define backend
   (make-fh-backend
+   'bstructs
    header
    trailer
    base
