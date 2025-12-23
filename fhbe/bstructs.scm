@@ -43,6 +43,12 @@
 ;;   3. &irritants: ((bstruct? foo_t bs*))
 ;; @end example
 
+;; Bitfields may be a little tricky.  This code would have to insert padding
+;; in order to be binary compatible with C libraries.
+;;   struct { uint8_t a: 3; uint8_t b: 3; uint8_t c: 3; } foo_t;
+;; ->
+;;   (struct (a (bits 3 u)) (b (bits 3 u)) (_1 (bits 2 u)) (c (bits 3 u)))
+;; We would need to do testing to make sure this works.
 ;; Another issue we will have is that
 
 ;;; Code:
@@ -144,7 +150,6 @@
     (else (no-base name))))
 
 (define (array type dim)
-  ;;`(in-bstructs (vector ,dim ,type)))
   `(vector ,dim ,type))
 
 (define (pointer type)
@@ -160,16 +165,17 @@
                    fields)))
     `(struct ,@flds)))
 
+(define (bitfield type size)
+  `(bits ,type ,size))
+
 (define* (union fields #:optional packed)
   (let ((flds (map (match-lambda
                      (`(,qq (,nm (,uq ,ty))) (list nm ty)))
                    fields)))
-    ;;`(in-bstructs (union ,@flds))))
     `(union ,@flds)))
 
 (define (function pr->pc pc->pr)
   'void)
-;;`(in-bstructs void))
 
 (define* (enum alist #:optional packed)
   'int)
@@ -179,28 +185,9 @@
      (define-bstruct ,name ,type)
      (export ,name)))
 
-;;  `(define-public ,name ,type))
-  
 (define* (makeobj type #:optional value)
-  #|
-  (if value
-      (if (pair? value)
-          `(bstruct-alloc ,type ,@value)
-          `(bstruct-alloc ,type ,value))
-      `(bstruct-alloc ,type))
-  |#
   (or value (if #f #f)))
 
-;; Bitfields will be a little tricky.  This code would have to insert padding
-;; in order to be binary compatible with C libraries.
-;;   struct { uint8_t a: 3; uint8_t b: 3; uint8_t c: 3; } foo_t;
-;; ->
-;;   (struct (a (bits 3 u)) (b (bits 3 u)) (_1 (bits 2 u)) (c (bits 3 u)))
-;; We would need to do testing to make sure this works.
-
-;; bitfield not used
-(define (bitfield type size)
-  `(in-bstructs (bits ,type ,size)))
 
 (define backend
   (make-fh-backend

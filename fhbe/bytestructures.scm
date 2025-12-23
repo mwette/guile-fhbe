@@ -20,8 +20,13 @@
 (define-module (fhbe bytestructures)
   #:export (backend)
   #:use-module (bytestructures guile)
+  #:use-module (ice-9 match)
   #:use-module ((system foreign) #:prefix ffi:)
   #:use-module (nyacc lang c99 fh-utils))
+
+(use-modules (ice-9 pretty-print))
+(define (pp exp) (pretty-print exp #:per-line-prefix "  "))
+(define (sf fmt . args) (apply simple-format #t fmt args))
 
 (define (header)
   `(begin
@@ -67,6 +72,7 @@
 
 (define (base name)
   (case name
+    ((void) ''void)
     ((char) 'int8)
     ((signed-char) 'int8)
     ((unsigned-char) 'uint8)
@@ -111,28 +117,31 @@
   `(bs:vector ,dim ,type))
 
 (define* (struct fields #:optional packed)
-  (let ((flds (map (lambda (f)
-                     (if (pair? (cadr f)) (cons (car f) (cadr f)) f))
-                   fields)))
+  (let ((flds (map (match-lambda
+                     (`(,qq (,nm (,uq (bitfld ,ty ,sz))))
+                      `(,qq (,nm (,uq ,ty) ,sz)))
+                     (`(,qq (,nm (,uq ,ty)))
+                      `(,qq (,nm (,uq ,ty)))))
+              fields)))
     `(bs:struct (list ,@flds))))
 
 (define (bitfield type size)
-  (list type size))
+  `(bitfld ,type ,size))
 
+(define* (union fields #:optional packed)
+  `(bs:union (list ,@fields)))
 
 (define backend
   (make-fh-backend
-   header                               ; header
-   trailer                              ; trailer
-   base                                 ; base
-   array                                ; array
+   header
+   trailer
+   base
+   array
    (lambda (type)                       ; pointer
      `(bs:pointer ,type)) 
-   (lambda* (flds #:optional packed)    ; struct
-     (if packed `(bs:struct (list ,@flds) #t) `(bs:struct (list ,@flds))))
-   bitfield                             ; bitfield
-   (lambda (flds)                       ; union
-      `(bs:union (list ,@flds)))
+   struct
+   bitfield
+   union
    (lambda (pr->pc pc->pr)              ; function
      ''void)
    (lambda* (alist #:optional packed)   ; enum
