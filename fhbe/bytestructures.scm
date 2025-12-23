@@ -133,6 +133,7 @@
 
 (define backend
   (make-fh-backend
+   'bytestructures
    header
    trailer
    base
