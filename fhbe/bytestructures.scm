@@ -55,8 +55,7 @@
                  (else (error "bytestrucgture-arg->pointer; bad arg:" arg)))))
              (else (error "bytestructure-arg->pointer: bad arg:" arg))))
      (define (extern-ref obj) (bytestructure-ref obj '*))
-     (define (extern-set! obj val) (bytestructure-set! obj '* val))
-     (eval-when (expand load eval) (define backend 'bytestructures))))
+     (define (extern-set! obj val) (bytestructure-set! obj '* val))))
 
 (define (trailer defs)
   (let ((sym->val (or (assq-ref defs 'sym->val) '(const #f))))
