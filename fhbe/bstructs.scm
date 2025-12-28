@@ -18,38 +18,11 @@
 ;;; Notes:
 
 ;; Users need to understand that bstructs is it's own language on top
-;; of scheme macros.   There are some issues that make this backend
-;; tricky.  Inside define-bstruct one can only reference bstruct types.
-;;
-;; UPDATE: bstructs in the repo seem better along
-;;
-;; Noting @code{int} is a type we can do this
-;; @example
-;; > ,use (bstructs)
-;;
-;; > (define-bstruct foo_t (struct (a int)))
-;; > (define v1 (bstruct-alloc foo_t (a 1)))
-;; > (bstruct-ref foo_t v1 a)
-;; $1 = 1
-;;
-;; > (define-bstruct bar_t int)
-;; > (define-bstruct baz_t (struct (a bar_t)))
-;; > (define v2 (bstruct-alloc baz_t (a 1)))
-;; > (bstruct-ref foo_t v2 a)
-;; ice-9/boot-9.scm:1685:16: In procedure raise-exception:
-;; ERROR:
-;;   1. &assertion-failure
-;;   2. &origin: bstruct-ref
-;;   3. &irritants: ((bstruct? foo_t bs*))
-;; @end example
-
-;; Bitfields may be a little tricky.  This code would have to insert padding
-;; in order to be binary compatible with C libraries.
-;;   struct { uint8_t a: 3; uint8_t b: 3; uint8_t c: 3; } foo_t;
-;; ->
-;;   (struct (a (bits 3 u)) (b (bits 3 u)) (_1 (bits 2 u)) (c (bits 3 u)))
-;; We would need to do testing to make sure this works.
-;; Another issue we will have is that
+;; of scheme macros.  Inside define-bstruct one can only reference bstruct
+;; keywords and type symbols, nothing else.  There are some issues that make
+;; this backend a bit tricky.  Also, I'm not confident bstruct bitfields
+;; will work in general.  (Maybe the cdata test for structs could be
+;; converted to test bstructs.)
 
 ;;; Code:
 
@@ -60,15 +33,9 @@
   #:use-module ((system foreign) #:prefix ffi:)
   #:use-module (nyacc lang c99 fh-utils))
 
-(use-modules (ice-9 pretty-print))
-(define (pp exp) (pretty-print exp #:per-line-prefix "  "))
-(define (sf fmt . args) (apply simple-format #t fmt args))
-
-;;(define (object-descriptor obj) (struct-vtable obj))
-;;(define descriptor-name (@@ (bstructs) bstruct-descriptor-name))
-;;(define (obj-type obj) (descriptor-name (object-descriptor obj)))
-;;(define (obj-type obj)
-;;  ((@@ (bstructs) bstruct-descriptor-name) (struct-vtable obj)))
+;;(use-modules (ice-9 pretty-print))
+;;(define (pp exp) (pretty-print exp #:per-line-prefix "  "))
+;;(define (sf fmt . args) (apply simple-format #t fmt args))
 
 (define (header)
   `(begin
@@ -158,14 +125,19 @@
    (else `(* ,type))))
 
 (define* (struct fields #:optional packed)
-  (let ((flds (map (match-lambda
-                     (`(,qq (,nm (,uq ,ty))) (list nm ty))
-                     (`(,qq (,nm (,uq ,ty) ,sz)) (list nm `(bits ,sz u))))
+  (let ((flds (map (match-lambda (`(,qq (,nm (,uq ,ty))) (list nm ty))
                    fields)))
     `(struct ,@flds)))
 
+(define (signed? type)
+  (and (member type '(int8 int16 int32 int64 int long short
+                           ssize_t ptrdiff_t intptr_t))
+       #t))
+
 (define (bitfield type size)
-  `(bits ,type ,size))
+  (if (signed? type)
+      `(bits ,size s)
+      `(bits ,size u)))
 
 (define* (union fields #:optional packed)
   (let ((flds (map (match-lambda
