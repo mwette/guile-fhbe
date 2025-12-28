@@ -158,14 +158,19 @@
    (else `(* ,type))))
 
 (define* (struct fields #:optional packed)
-  (let ((flds (map (match-lambda
-                     (`(,qq (,nm (,uq ,ty))) (list nm ty))
-                     (`(,qq (,nm (,uq ,ty) ,sz)) (list nm `(bits ,sz u))))
+  (let ((flds (map (match-lambda (`(,qq (,nm (,uq ,ty))) (list nm ty))
                    fields)))
     `(struct ,@flds)))
 
+(define (signed? type)
+  (and (member type '(int8 int16 int32 int64 int long short
+                           ssize_t ptrdiff_t intptr_t))
+       #t))
+
 (define (bitfield type size)
-  `(bits ,type ,size))
+  (if (signed? type)
+      `(bits ,size s)
+      `(bits ,size u)))
 
 (define* (union fields #:optional packed)
   (let ((flds (map (match-lambda
