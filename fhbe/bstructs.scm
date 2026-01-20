@@ -21,8 +21,7 @@
 ;; of scheme macros.  Inside define-bstruct one can only reference bstruct
 ;; keywords and type symbols, nothing else.  There are some issues that make
 ;; this backend a bit tricky.  Also, I'm not confident bstruct bitfields
-;; will work in general.  (Maybe the cdata test for structs could be
-;; converted to test bstructs.)
+;; will work in general.  The current code will crash with any bitfields.
 
 ;;; Code:
 
@@ -124,20 +123,112 @@
    ((and (pair? type) (eq? (car type) 'delay)) `(* void))
    (else `(* ,type))))
 
-(define* (struct fields #:optional packed)
-  (let ((flds (map (match-lambda (`(,qq (,nm (,uq ,ty))) (list nm ty))
-                   fields)))
-    `(struct ,@flds)))
-
 (define (signed? type)
   (and (member type '(int8 int16 int32 int64 int long short
                            ssize_t ptrdiff_t intptr_t))
        #t))
 
+(define (signof type)
+  (case type
+    ((int8 int16 int32 int64 int long short ssize_t ptrdiff_t intptr_t) 's)
+    (else 'u)))
+
+;; from (sxml fold)
+(define (fold-values proc list . seeds)
+  (if (null? list)
+      (apply values seeds)
+      (call-with-values
+          (lambda () (apply proc (car list) seeds))
+        (lambda seeds
+          (apply fold-values proc (cdr list) seeds)))))
+
+;; struct utils:
+(eval-when (expand load eval)
+  (define (incr-size fs fa ss)
+    (+ fs (* fa (quotient (+ ss (1- fa)) fa))))
+  (define (maxi-size fs fa ss)
+    (max fs ss))
+  (define (roundup-bits a s)
+    (* a (quotient (+ s (1- a)) a)))
+  (define (incr-bit-size w a s)
+    (let* ((a (* 8 a)) (s (* 8 s)) (ru (roundup-bits a s)))
+      (/ (cond ((zero? w) ru) ((> (+ s w) ru) (+ w ru)) (else (+ w s))) 8)))
+  (define (bf-offset w a s)
+    (let* ((a (* 8 a)) (s (* 8 s)) (u (roundup-bits a s)))
+      (/ (cond ((> (+ s w) u) u) (else (- u a))) 8))))
+
+;; bstruct-sizeof
+;; bstruct-alignof
+
+#;(define* (mk-struct fields #:optional packed?)
+  ;; cases
+  ;; bitfield
+  ;; 1) non-bitfield, no name => transferred and reified
+  ;; 2) non-bitfield, w/ name => transferred
+  ;; 3) bitfield, w/ name, positive size => transferred
+  ;; 4) bitfield, no name, zero size => round-up, not transferred
+  ;; 5) bitfield, no name, positive size => padding, not transferred
+  ;; cases 4&5 can be combined easily, I think
+  (let loop ((cfl '()) (ssz 0) (sal 0) (sfl fields))
+    (if (pair? sfl)
+        (match (car sfl)
+
+          ((name type)                  ; normal (no bitfield)
+           (let* ((fsz (bstruct-sizeof type))
+                  (fal (if packed? 1 (bstruct-alignof type)))
+                  (isz (quotient (+ (* 8 ssz) 7) 8))
+                  (ssz (incr-bit-size 0 fal isz))
+                  (cfl (if (> ssz isz) (cons '(_ uint8 ,(- ssz isz)) cfl) cfl))
+                  (cfl (cons `(,name ,type) cfl))
+             (loop cfl (incr-size fsz fal ssz) (max fal sal) (cdr sfl))))
+
+          ((name type width)            ; bitfield
+           (let* ((fsz (bstruct-sizeof type))
+                  (fal (if packed? 1 (bstruct-alignof type)))
+                  (mty (ctype-info type))
+                  (sx? #t) ;; FIXME: sx? = signed?
+                  (cio (bf-offset width fal ssz))      ; ci struct offset
+                  (ssz (incr-bit-size width fal ssz))  ; moved
+                  (bfo (- (* 8 ssz) width (* 8 cio)))  ; offset wrt ci
+                  )
+             (if name
+                 (let* ((bf (%make-cbitfield mty bfo width sx?))
+                        (ty (%make-ctype fsz fal 'bitfield bf #f))
+                        (cf (%make-cfield name ty cio)))
+                   (loop (cons cf cfl) ssz (max fal sal) (cdr sfl)))
+                 (loop cfl ssz sal (cdr sfl)))))
+
+          (otherwize
+           (sferr "cstruct: bad form: ~s" (car sfl))
+           (error "yuck")))
+
+        ;; done
+        (let* ((select (make-selector (add-fields cfl 0 '()))))
+          (%make-ctype (incr-bit-size 0 sal ssz) sal 'struct
+                       (%make-cstruct (reverse cfl) select) #f)))))
+
+
+;; needs to be
+;; (struct
+;;   (a int)
+;;   (__1 (bits (x 3 s) (y 3 s)))
+;;   (__2 (bits (m 7 u) (n 7 u) (_ 18 u))) ; from unsigned short ...
+;;
+(define* (struct fields #:optional packed)
+  (let ((flds (fold-values
+               (lambda (fld seed rbt)
+                 (match fld
+                   (`(,qq (,nm (bits ,sz ,uq ,ty)))
+                    (values
+                     (cons (list nm `(bits ,sz ,(signof ty))) seed)
+                     #f))
+                   (`(,qq (,nm (,uq ,ty)))
+                    (values (cons `(list nm ty) seed) #f))))
+               fields '() #f)))
+    `(struct ,@flds)))
+
 (define (bitfield type size)
-  (if (signed? type)
-      `(bits ,size s)
-      `(bits ,size u)))
+  `(bits ,type ,size))
 
 (define* (union fields #:optional packed)
   (let ((flds (map (match-lambda
