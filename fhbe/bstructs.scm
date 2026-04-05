@@ -1,6 +1,6 @@
 ;;; bstructs.scm -- currently does not work; see Notes section below
 
-;; Copyright (C) 2025 Matthew Wette
+;; Copyright (C) 2025-2026 Matthew Wette
 ;;
 ;; This library is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU Lesser General Public
@@ -19,9 +19,25 @@
 
 ;; Users need to understand that bstructs is it's own language on top
 ;; of scheme macros.  Inside define-bstruct one can only reference bstruct
-;; keywords and type symbols, nothing else.  There are some issues that make
-;; this backend a bit tricky.  Also, I'm not confident bstruct bitfields
-;; will work in general.  The current code will crash with any bitfields.
+;; keywords and type symbols, nothing else.  Creating a direct converter
+;; is going to be tricky.  This implementation instead create cdata type
+;; (i.e., ctypes) and then feeds ctypes to a ctype->bstruct converter.
+;; This version implements be-routine to procude ctype directly and then
+;; let deftype convert the whole thing.   This causes a problem in
+;; mtype->be-type where `(arg->pointer ,name ,(be-pointer type)) is called.
+;; (hey may have idea ...)
+;; ISSUES:
+;; 1. calls to arg->pointer with hint see hints as #<cype pointer ...>
+
+;; To just convert some structs etc
+;;   (use-modules (nyacc lang c99 ffi-help))
+;;   (use-modules (nyacc lang c99 fh-utils))
+;;   (use-modules ((fhbe bstructs) #:prefix fhbe:))
+;;   (*fh-backend* fhbe:backend)
+;;   ((fhbe-header (*fh-backend*)))
+;;   (let* ((code "typedef struct { double x; double y; };")
+;;          (sexp (ccode->sexp code)))
+;;      (display sexp) (newline))
 
 ;;; Code:
 
@@ -32,44 +48,18 @@
   #:use-module ((system foreign) #:prefix ffi:)
   #:use-module (nyacc lang c99 fh-utils))
 
-;;(use-modules (ice-9 pretty-print))
-;;(define (pp exp) (pretty-print exp #:per-line-prefix "  "))
-;;(define (sf fmt . args) (apply simple-format #t fmt args))
+(use-modules (ice-9 pretty-print))
+(define (pp exp) (pretty-print exp #:per-line-prefix "  "))
+(define (sf fmt . args) (apply simple-format #t fmt args))
 
-(define (header)
-  `(begin
-     (use-modules (bstructs))
-     (define (obj-type obj)
-       ((@@ (bstructs) bstruct-descriptor-name) (struct-vtable obj)))
-     (define-syntax-rule (arg->number arg)
-       (cond ((number? arg) arg)
-             ;;((bstruct? arg) (bstruct-ref (obj-type arg) arg)) nope
-             (else (error "fhbe/bstruct: arg->number: bad arg:" arg))))
-     (define-syntax arg->pointer
-       (syntax-rules ()
-         ((_ arg)
-          (cond ((ffi:pointer? arg) arg)
-                ((string? arg) (ffi:string->pointer arg))
-                ((equal? 0 arg) ffi:%null-pointer)
-                ;;((bstruct? arg) ... ) nope
-                (else (error "fhbe/bstruct: arg->pointer: bad arg:" arg))))
-         ((_ arg hint) (arg->pointer arg))))
-     (define-syntax-rule (extern-ref obj)
-       (bstruct-ref (obj-type obj) obj '*))
-     (define-syntax-rule (extern-set! obj val)
-       (bstruct-set! (obj-type obj) obj '* val))))
+;; Instead of wrestling with bstructs language (which does not
+;; compose w/ scheme easily), we process type declarations with
+;; cdata and then convert at the end.
 
-(define (trailer defs)
-  (let ((sym->val (or (assq-ref defs 'sym->val) '(const #f))))
-    `(define (unwrap-enum arg)
-       (cond
-        ((number? arg) arg)
-        ((symbol? arg) (,sym->val arg))
-        ;;((bstruct? arg) (bstruct-ref arg)) nope
-        (else (error "fhbe/bstruct: type mismatch"))))))
-
-(define (no-base name)
-  (fherr/once "no backend type for ~a" name))
+(use-modules ((nyacc foreign arch-info)))
+(use-modules ((nyacc foreign cdata)))
+(define %cpointer-type (@@ (nyacc foreign cdata) %cpointer-type))
+(define *mod* (make-parameter #f))
 
 (define (base name)
   (case name
@@ -104,166 +94,194 @@
     ((wchar_t) 'uint32)
     ((char16_t) 'uint16)
     ((char32_t) 'uint32)
-    ((long-double) (no-base name))
-    ((_Float16) (no-base name))
-    ((_Float128) (no-base name))
+    ((long-double) #f)
+    ((_Float16) #f)
+    ((_Float128) #f)
     ((float-_Complex) 'complex64)
     ((double-_Complex) 'complex128)
-    ((long-double-_Complex) (no-base name))
-    ((__int128) (no-base name))
-    ((unsigned-__int128) (no-base name))
-    (else (no-base name))))
+    ((long-double-_Complex) #f)
+    ((__int128) #f)
+    ((unsigned-__int128) #f)
+    (else #f)))
 
-(define (array type dim)
-  `(vector ,dim ,type))
+(define qq 'quasiquote)
+(define uq 'unquote)
 
-(define (pointer type)
+
+(define (header)
+  (*mod* (make-fresh-user-module))
+  (let ((mod (*mod*)))
+    (eval '(use-modules (nyacc foreign cdata)) mod)
+    (for-each
+     (lambda (name)
+       ;;(eval `(define ,name (name-ctype ',name (cbase ',name))) mod))
+       (eval `(define ,name (name-ctype ',(base name) (cbase ',name))) mod))
+     (cdr base-type-symbol-list))
+    (eval '(define void (name-ctype 'void (cbase 'void))) mod)
+    (eval '(define void* (name-ctype 'void* (cpointer 'void))) mod))
+  `(begin
+     (use-modules (bstructs))
+     (define (obj-type obj)
+       ((@@ (bstructs) bstruct-descriptor-name) (struct-vtable obj)))
+     (define-syntax-rule (arg->number arg)
+       (cond ((number? arg) arg)
+             ;;((bstruct? arg) (bstruct-ref (obj-type arg) arg)) nope
+             (else (error "fhbe/bstruct: arg->number: bad arg:" arg))))
+     (define-syntax arg->pointer
+       (syntax-rules ()
+         ((_ arg)
+          (cond ((ffi:pointer? arg) arg)
+                ((string? arg) (ffi:string->pointer arg))
+                ((equal? 0 arg) ffi:%null-pointer)
+                ;;(else (error "fhbe/bstruct: arg->pointer: bad arg:" arg))))
+                (else arg)))
+         ((_ arg hint) (arg->pointer arg))))
+     (define-syntax-rule (extern-ref obj)
+       (bstruct-ref (obj-type obj) obj '*))
+     (define-syntax-rule (extern-set! obj val)
+       (bstruct-set! (obj-type obj) obj '* val))))
+
+(define (trailer defs)
+  (*mod* #f)
+  (let ((sym->val (or (assq-ref defs 'sym->val) '(const #f))))
+    `(define (unwrap-enum arg)
+       (cond
+        ((number? arg) arg)
+        ((symbol? arg) (,sym->val arg))
+        ;;((bstruct? arg) (bstruct-ref arg)) nope
+        (else (error "fhbe/bstruct: type mismatch"))))))
+
+(define (ctype->bstruct ctype)
+  (define (ifor gap)
+    (case gap
+      ((1) 'int8)
+      ((2) 'int16)
+      ((4) 'int32)
+      ((8) 'int64)))
+
+  (define (cnvt-aggr type flds)
+    (define mkpad
+      (let ((pc 0))
+        (lambda ()
+          (set! pc (1+ pc))
+          (string->symbol (simple-format #f "_~a" pc)))))
+
+    (let loop ((bsl '()) (po 0) (ps 0) (bits '()) (bu #f) (bs 0) (cdl flds))
+      ;; po: prev offset; ps: prev size; bits used: if bitmask
+      ;; np: next pad, bs: bitfield start
+      (if (pair? cdl)
+          (let* ((fld (car cdl))
+                 (name (cfield-name fld))
+                 (type (cfield-type fld))
+                 (typename (ctype-name type))
+                 (offs (cfield-offset fld))
+                 (size (ctype-size type))
+                 (kind (ctype-kind type))
+                 (info (ctype-info type)))
+            (cond
+             ((eq? 'bitfield kind)
+              (let* ((shift (cbitfield-shift info))
+                     (width (cbitfield-width info))
+                     (mtype (cbitfield-mtype info))
+                     (bs (if bu bs shift))
+                     (sign (if (mtype-signed? mtype) 's 'u))
+                     (bits (cons (list name width sign) bits)))
+                (loop bsl offs size bits (+ shift width) bs (cdr cdl))))
+             (bu
+              (let* ((gap (- (* 8 (- offs po)) bu))
+                     (bits (if (zero? gap) bits (cons (list '_ gap 's) bits)))
+                     (bsl (cons `(,(mkpad) (bits ,@(reverse bits))) bsl)))
+                (loop bsl offs size '() #f bs cdl)))
+             (else
+              (loop (cons `(,name ,(or typename (cnvt type))) bsl)
+                    offs size '() #f bs (cdr cdl)))))
+          (let ((gap (- (ctype-size type) (+ po ps))))
+            (if (not (zero? gap))
+                (reverse (cons `(_ ,(ifor gap)) bsl))
+                (reverse bsl))))))
+
+  (define (cnvt type)
+    (cond
+     ((symbol? type) type)
+     ((ctype-name type) => identity)
+     (else
+      (let ((info (ctype-info type)))
+        ;;(sf "cnvt ~s ~s\n" type info)
+        (case (ctype-kind type)
+          ((base) (if (eq? info 'void) 'void (error "oops")))
+          ((struct) `(struct ,@(cnvt-aggr type (cstruct-fields info))))
+          ((union) `(union ,@(cnvt-aggr type (cunion-fields info))))
+          ((pointer)
+           (let* ((ptype (%cpointer-type info)) (pname (ctype-name ptype)))
+             (cond
+              ((promise? ptype) `(* void))
+              (pname `(* ,pname))
+              (else `(* ,(cnvt ptype))))))
+          ((array) `(vector ,(carray-length info) ,(cnvt (carray-type info))))
+          ((enum) (base 'int))
+          ((function) (base 'void))
+          (else (error "ctype->bstruct: needs work:" (ctype-kind type))))))))
+  
+    (cnvt ctype))
+(export ctype->bstruct)
+
+(define (as-ctype type)
   (cond
-   ((equal? type ''void) `(* void))
-   ((and (pair? type) (eq? (car type) 'delay)) `(* void))
-   (else `(* ,type))))
-
-(define (signed? type)
-  (and (member type '(int8 int16 int32 int64 int long short
-                           ssize_t ptrdiff_t intptr_t))
-       #t))
-
-(define (signof type)
-  (case type
-    ((int8 int16 int32 int64 int long short ssize_t ptrdiff_t intptr_t) 's)
-    (else 'u)))
-
-;; from (sxml fold)
-(define (fold-values proc list . seeds)
-  (if (null? list)
-      (apply values seeds)
-      (call-with-values
-          (lambda () (apply proc (car list) seeds))
-        (lambda seeds
-          (apply fold-values proc (cdr list) seeds)))))
-
-;; struct utils:
-(eval-when (expand load eval)
-  (define (incr-size fs fa ss)
-    (+ fs (* fa (quotient (+ ss (1- fa)) fa))))
-  (define (maxi-size fs fa ss)
-    (max fs ss))
-  (define (roundup-bits a s)
-    (* a (quotient (+ s (1- a)) a)))
-  (define (incr-bit-size w a s)
-    (let* ((a (* 8 a)) (s (* 8 s)) (ru (roundup-bits a s)))
-      (/ (cond ((zero? w) ru) ((> (+ s w) ru) (+ w ru)) (else (+ w s))) 8)))
-  (define (bf-offset w a s)
-    (let* ((a (* 8 a)) (s (* 8 s)) (u (roundup-bits a s)))
-      (/ (cond ((> (+ s w) u) u) (else (- u a))) 8))))
-
-;; bstruct-sizeof
-;; bstruct-alignof
-
-#;(define* (mk-struct fields #:optional packed?)
-  ;; cases
-  ;; bitfield
-  ;; 1) non-bitfield, no name => transferred and reified
-  ;; 2) non-bitfield, w/ name => transferred
-  ;; 3) bitfield, w/ name, positive size => transferred
-  ;; 4) bitfield, no name, zero size => round-up, not transferred
-  ;; 5) bitfield, no name, positive size => padding, not transferred
-  ;; cases 4&5 can be combined easily, I think
-  (let loop ((cfl '()) (ssz 0) (sal 0) (sfl fields))
-    (if (pair? sfl)
-        (match (car sfl)
-
-          ((name type)                  ; normal (no bitfield)
-           (let* ((fsz (bstruct-sizeof type))
-                  (fal (if packed? 1 (bstruct-alignof type)))
-                  (isz (quotient (+ (* 8 ssz) 7) 8))
-                  (ssz (incr-bit-size 0 fal isz))
-                  (cfl (if (> ssz isz) (cons '(_ uint8 ,(- ssz isz)) cfl) cfl))
-                  (cfl (cons `(,name ,type) cfl))
-             (loop cfl (incr-size fsz fal ssz) (max fal sal) (cdr sfl))))
-
-          ((name type width)            ; bitfield
-           (let* ((fsz (bstruct-sizeof type))
-                  (fal (if packed? 1 (bstruct-alignof type)))
-                  (mty (ctype-info type))
-                  (sx? #t) ;; FIXME: sx? = signed?
-                  (cio (bf-offset width fal ssz))      ; ci struct offset
-                  (ssz (incr-bit-size width fal ssz))  ; moved
-                  (bfo (- (* 8 ssz) width (* 8 cio)))  ; offset wrt ci
-                  )
-             (if name
-                 (let* ((bf (%make-cbitfield mty bfo width sx?))
-                        (ty (%make-ctype fsz fal 'bitfield bf #f))
-                        (cf (%make-cfield name ty cio)))
-                   (loop (cons cf cfl) ssz (max fal sal) (cdr sfl)))
-                 (loop cfl ssz sal (cdr sfl)))))
-
-          (otherwize
-           (sferr "cstruct: bad form: ~s" (car sfl))
-           (error "yuck")))
-
-        ;; done
-        (let* ((select (make-selector (add-fields cfl 0 '()))))
-          (%make-ctype (incr-bit-size 0 sal ssz) sal 'struct
-                       (%make-cstruct (reverse cfl) select) #f)))))
-
-
-;; needs to be
-;; (struct
-;;   (a int)
-;;   (__1 (bits (x 3 s) (y 3 s)))
-;;   (__2 (bits (m 7 u) (n 7 u) (_ 18 u))) ; from unsigned short ...
-;;
-(define* (struct fields #:optional packed)
-  (let ((flds (fold-values
-               (lambda (fld seed rbt)
-                 (match fld
-                   (`(,qq (,nm (bits ,sz ,uq ,ty)))
-                    (values
-                     (cons (list nm `(bits ,sz ,(signof ty))) seed)
-                     #f))
-                   (`(,qq (,nm (,uq ,ty)))
-                    (values (cons `(list nm ty) seed) #f))))
-               fields '() #f)))
-    `(struct ,@flds)))
-
-(define (bitfield type size)
-  `(bits ,type ,size))
-
-(define* (union fields #:optional packed)
-  (let ((flds (map (match-lambda
-                     (`(,qq (,nm (,uq ,ty))) (list nm ty)))
-                   fields)))
-    `(union ,@flds)))
-
-(define (function pr->pc pc->pr)
-  'void)
-
-(define* (enum alist #:optional packed)
-  'int)
+   ((ctype? type) type)
+   ((symbol? type) (module-ref (*mod*) type))
+   ;;((and (pair? type) (eq? 'delay (car type)))
+   (else
+    (sf "type: ~s\n" type)
+    (error "coding error"))))
 
 (define (deftype name type)
-  `(begin
-     (define-bstruct ,name ,type)
-     (export ,name)))
+  (let ((rtype (if (ctype? type) type (module-ref (*mod*) type)))
+        (cm #f))
+    (module-define! (*mod*) name (name-ctype name rtype))
+    (dynamic-wind
+      (lambda () (set! cm (set-current-module (*mod*))))
+      (lambda () `(define-bstruct ,name ,(ctype->bstruct rtype)))
+      (lambda () (set-current-module cm)))))
 
-(define* (makeobj type #:optional value)
-  (or value (if #f #f)))
+(define (makeobj typename . args)
+  ;;`(bstruct-alloc ,typename ,@args))
+  `(identity ,@args))
 
+
+(define (fix-flds fields)
+  (map (lambda (f) (match f
+                     (`(,uq (,n (cbitfield ,t ,s))) `(,n ,(as-ctype t) ,s))
+                     (`(,qq (,n (,uq ,t))) `(,n ,(as-ctype t)))))
+       fields))
 
 (define backend
   (make-fh-backend
    'bstructs
    header
    trailer
-   base
-   array
-   pointer
-   struct
-   bitfield
-   union
-   function
-   enum
+   (lambda (name)                       ; base
+     ;;(cbase name))
+     name)
+   (lambda (type dim)                   ; array
+     (carray (as-ctype type) dim))
+   (lambda (type)                       ; pointer
+     (cond
+      ((and (pair? type) (eq? 'delay (car type)))
+       (cpointer (cbase 'void)))
+      ((symbol? type) type)
+      (else (error "be-pointer failed"))))
+   (lambda* (flds #:optional packed)    ; struct
+     (cstruct (fix-flds flds) packed))
+   (lambda (type size)                  ; bitfield
+     `(cbitfield ,(as-ctype type) ,size))
+   (lambda (flds)                       ; union
+     (cunion (fix-flds flds)))
+   (lambda (pr->pc pc->pr)              ; function
+     (cfunction pr->pc pc->pr))
+   (lambda* (alist #:optional packed)   ; enum
+     ;; cannot handle packed enums :(
+     ;;(if packed (cbase 'int) (cbase 'int)))
+     (if packed 'int 'int))
    deftype
    makeobj))
 
