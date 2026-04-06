@@ -240,7 +240,8 @@
     (module-define! (*mod*) name (name-ctype name rtype))
     (dynamic-wind
       (lambda () (set! cm (set-current-module (*mod*))))
-      (lambda () `(define-bstruct ,name ,(ctype->bstruct rtype)))
+      (lambda () `(begin (define-bstruct ,name ,(ctype->bstruct rtype))
+                         (export ,name)))
       (lambda () (set-current-module cm)))))
 
 (define (makeobj typename . args)
