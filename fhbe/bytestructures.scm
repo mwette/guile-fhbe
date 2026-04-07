@@ -147,7 +147,7 @@
    (lambda* (alist #:optional packed)   ; enum
      'int)
    (lambda (name type)                  ; deftype
-     `(define-public ,name ,type))
+     `(define ,name ,type))
    (lambda* (type #:optional value)
      (if value `(bytestructure ,type ,value) `(bytestructure ,type)))))
 
