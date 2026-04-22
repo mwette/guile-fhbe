@@ -15,10 +15,19 @@
 ;; You should have received a copy of the GNU Lesser General Public License
 ;; along with this library; if not, see <http://www.gnu.org/licenses/>
 
+;;; Notes:
+;; To just convert some structs etc
+;;   (use-modules (nyacc lang c99 ffi-help))
+;;   (use-modules (fhbe bytestructures))
+;;   (setup-bytestructures-fhbe *fh-backend*)
+;;   (let* ((code "typedef struct { double x; double y; };")
+;;          (sexp (ccode->sexp code)))
+;;      (display sexp) (newline))
+
 ;;; Code:
 
 (define-module (fhbe bytestructures)
-  #:export (backend)
+  #:export (backend setup-bytestructures-fhbe)
   #:use-module (bytestructures guile)
   #:use-module (ice-9 match)
   #:use-module ((system foreign) #:prefix ffi:)
@@ -150,5 +159,9 @@
      `(define ,name ,type))
    (lambda* (type #:optional value)
      (if value `(bytestructure ,type ,value) `(bytestructure ,type)))))
+
+(define (setup-bstructs-fhbe fhbe-param)
+  (fhbe-param backend)
+  ((fhbe-header fhbe-param)))
 
 ;; --- last line ---
