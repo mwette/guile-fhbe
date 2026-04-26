@@ -1,7 +1,7 @@
 # guile-fhbe - work in progress
 alternate backends for nyacc ffi-helper
 
-with nyacc-3.04 or later in path ...
+with nyacc-3.05 or later in path ...
 
 ```
 $ export GUILE_LOAD_PATH=`pwd`:$GUILD_LOAD_PATH 
