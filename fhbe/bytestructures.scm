@@ -32,7 +32,6 @@
   #:use-module (ice-9 match)
   #:use-module ((system foreign) #:prefix ffi:)
   #:use-module (bytestructures guile)
-  #:use-module (nyacc lang c99 fh-utils)
   #:use-module (nyacc lang c99 ffi-help))
 
 (use-modules (ice-9 pretty-print))
