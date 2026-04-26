@@ -1,6 +1,6 @@
 ;;; bytestructures.scm
 
-;; Copyright (C) 2025 Matthew Wette
+;; Copyright (C) 2025-2026 Matthew Wette
 ;;
 ;; This library is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU Lesser General Public
@@ -16,22 +16,24 @@
 ;; along with this library; if not, see <http://www.gnu.org/licenses/>
 
 ;;; Notes:
-;; To just convert some structs etc
-;;   (use-modules (nyacc lang c99 ffi-help))
+;; To convert a struct
 ;;   (use-modules (fhbe bytestructures))
-;;   (setup-bytestructures-fhbe *fh-backend*)
-;;   (let* ((code "typedef struct { double x; double y; };")
-;;          (sexp (ccode->sexp code)))
-;;      (display sexp) (newline))
+;;   (ccode->bytestructures-sexp "typedef struct { double x; double y; } foo_t;")
+;; => 
+;;   (begin
+;;     (define struct-foo (bs:struct (list `(i ,int) `(d ,double))))
+;;     (define struct-foo* (bs:pointer struct-foo))
+;;     (export struct-foo struct-foo*))
 
 ;;; Code:
 
 (define-module (fhbe bytestructures)
-  #:export (backend setup-bytestructures-fhbe)
-  #:use-module (bytestructures guile)
+  #:export (backend ccode->bytestructures-sexp)
   #:use-module (ice-9 match)
   #:use-module ((system foreign) #:prefix ffi:)
-  #:use-module (nyacc lang c99 fh-utils))
+  #:use-module (bytestructures guile)
+  #:use-module (nyacc lang c99 fh-utils)
+  #:use-module (nyacc lang c99 ffi-help))
 
 (use-modules (ice-9 pretty-print))
 (define (pp exp) (pretty-print exp #:per-line-prefix "  "))
@@ -160,8 +162,31 @@
    (lambda* (type #:optional value)
      (if value `(bytestructure ,type ,value) `(bytestructure ,type)))))
 
-(define (setup-bstructs-fhbe fhbe-param)
-  (fhbe-param backend)
-  ((fhbe-header fhbe-param)))
+;; @deffn {Procedure} ccode->bstructs-sexp code [attrs] => sexp
+;; Convert @var{ccode}, a string of C code, to a s-expression of
+;; @emph{bstructs} code, for use in Guile.  For example,
+;; @example
+;; (use-modules (fhbe bytestructures))
+;; (ccode->bytestructures-sexp "typedef struct @{ double x; double y; @} foo_t;")
+;; => 
+;; (begin
+;;   (define struct-foo (bs:struct (list `(i ,int) `(d ,double))))
+;;   (define struct-foo* (bs:pointer struct-foo))
+;;   (export struct-foo struct-foo*))
+;; @end example
+;; @end deffn
+(define* (ccode->bytestructures-sexp ccode #:optional (attrs '()))
+  "- Procedure: ccode->bstructs-sexp code => sexp
+     Convert CCODE, a string of C code, to a s-expression of _bstructs_
+     code, for use in Guile.  For example,
+          (use-modules (fhbe bytestructures))
+          (ccode->bytestructures-sexp \"typedef struct { double x; double y; } foo_t;\")
+          =>
+          (begin
+            (define struct-foo (bs:struct (list `(i ,int) `(d ,double))))
+            (define struct-foo* (bs:pointer struct-foo))
+            (export struct-foo struct-foo*))"
+  (parameterize ((*fh-backend* backend))
+    (ccode->sexp ccode attrs)))
 
 ;; --- last line ---
