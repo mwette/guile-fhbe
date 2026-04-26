@@ -18,35 +18,32 @@
 ;;; Notes:
 
 ;; Users need to understand that bstructs is it's own language on top
-;; of scheme macros.  Inside define-bstruct one can only reference bstruct
-;; keywords and type symbols, nothing else.  Creating a direct converter
-;; is going to be tricky.  This implementation instead create cdata type
-;; (i.e., ctypes) and then feeds ctypes to a ctype->bstruct converter.
-;; This version implements be-routine to procude ctype directly and then
-;; let deftype convert the whole thing.   This causes a problem in
-;; mtype->be-type where `(arg->pointer ,name ,(be-pointer type)) is called.
-;; (hey may have idea ...)
-;; ISSUES:
-;; 1. calls to arg->pointer with hint see hints as #<cype pointer ...>
+;; of scheme macros.  Inside define-bstruct one can only reference
+;; bstruct keywords and type symbols, nothing else.  Creating a direct
+;; converter is going to be tricky.  This implementation instead
+;; creates cdata types (i.e., ctypes) and then feeds them to a
+;; ctype->bstruct converter.  The be-routines procude ctype directly
+;; (instead of sexp's) and the deftype method converts the whole
+;; thing to a bstruct.
 
-;; To just convert some structs etc
-;;   (use-modules (nyacc lang c99 ffi-help))
-;;   (use-modules (nyacc lang c99 fh-utils))
-;;   (use-modules ((fhbe bstructs) #:prefix fhbe:))
-;;   (*fh-backend* fhbe:backend)
-;;   ((fhbe-header (*fh-backend*)))
-;;   (let* ((code "typedef struct { double x; double y; };")
-;;          (sexp (ccode->sexp code)))
-;;      (display sexp) (newline))
+;; To convert a struct
+;;   (use-modules (fhbe bstructs))
+;;   (ccode->bstructs-sexp "typedef struct { double x; double y; } foo_t;")
+;; => 
+;;   (begin
+;;     (define-bstruct struct-foo (struct (i int) (d double)))
+;;     (define-bstruct struct-foo* (* struct-foo))
+;;     (export struct-foo struct-foo*))
 
 ;;; Code:
 
 (define-module (fhbe bstructs)
-  #:export (backend)
+  #:export (backend ccode->bstructs-sexp)
   #:use-module (bstructs)
   #:use-module (ice-9 match)
   #:use-module ((system foreign) #:prefix ffi:)
-  #:use-module (nyacc lang c99 fh-utils))
+  #:use-module (nyacc lang c99 ffi-utils)
+  #:use-module (nyacc lang c99 ffi-help))
 
 (use-modules (ice-9 pretty-print))
 (define (pp exp) (pretty-print exp #:per-line-prefix "  "))
@@ -206,7 +203,6 @@
      ((ctype-name type) => identity)
      (else
       (let ((info (ctype-info type)))
-        ;;(sf "cnvt ~s ~s\n" type info)
         (case (ctype-kind type)
           ((base) (if (eq? info 'void) 'void (error "oops")))
           ((struct) `(struct ,@(cnvt-aggr type (cstruct-fields info))))
@@ -268,7 +264,7 @@
      (cond
       ((and (pair? type) (eq? 'delay (car type)))
        (cpointer (cbase 'void)))
-      ((symbol? type) type)
+      ((symbol? type) (cpointer (module-ref (*mod*) type)))
       (else (error "be-pointer failed"))))
    (lambda* (flds #:optional packed)    ; struct
      (cstruct (fix-flds flds) packed))
@@ -279,10 +275,53 @@
    (lambda (pr->pc pc->pr)              ; function
      (cfunction pr->pc pc->pr))
    (lambda* (alist #:optional packed)   ; enum
-     ;; cannot handle packed enums :(
-     ;;(if packed (cbase 'int) (cbase 'int)))
-     (if packed 'int 'int))
+     (let ((etype (cenum alist packed)))
+       (if packed 
+           (case (cenum-mtype (ctype-info etype))
+             ((s8) (cbase 'int8_t)) ((u8) (cbase 'uint8_t))
+             ((s16) (cbase 'int16_t)) ((u16) (cbase 'uint16_t))
+             ((s32) (cbase 'int32_t)) ((u32) (cbase 'uint32_t))
+             ((s64) (cbase 'int64_t)) ((u32) (cbase 'uint64_t)))
+           (cbase 'int))))
    deftype
    makeobj))
+
+
+;; @deffn {Procedure} ccode->bstructs-sexp code => sexp
+;; Convert @var{ccode}, a string of C code, to a s-expression of
+;; @emph{bstructs} code, for use in Guile.  For example,
+;; @example
+;; (use-modules (fhbe bstructs))
+;; (ccode->bstructs-sexp "typedef struct @{ double x; double y; @} foo_t;")
+;; =>
+;; (begin
+;;   (define-bstruct struct-foo (struct (i int) (d double)))
+;;   (define-bstruct struct-foo* (* struct-foo))
+;;   (export struct-foo struct-foo*))
+;; @end example
+;; @end deffn
+(define* (ccode->bstructs-sexp ccode #:optional (attrs '()))
+  "- Procedure: ccode->bstructs-sexp code => sexp
+     Convert CCODE, a string of C code, to a s-expression of _bstructs_
+     code, for use in Guile.  For example,
+          (use-modules (fhbe bstructs))
+          (ccode->bstructs-sexp \"typedef struct { double x; double y; } foo_t;\")
+          =>
+          (begin
+            (define-bstruct struct-foo (struct (i int) (d double)))
+            (define-bstruct struct-foo* (* struct-foo))
+            (export struct-foo struct-foo*))"
+  (parameterize ((*fh-backend* backend)
+                 (*mod* (make-fresh-user-module)))
+    (let ((mod (*mod*)))
+      (eval '(use-modules (nyacc foreign cdata)) mod)
+      (for-each
+       (lambda (name)
+         ;;(eval `(define ,name (name-ctype ',name (cbase ',name))) mod))
+         (eval `(define ,name (name-ctype ',(base name) (cbase ',name))) mod))
+       (cdr base-type-symbol-list))
+      (eval '(define void (name-ctype 'void (cbase 'void))) mod)
+      (eval '(define void* (name-ctype 'void* (cpointer 'void))) mod))
+    (ccode->sexp ccode attrs)))
 
 ;; --- last line ---
