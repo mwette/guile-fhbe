@@ -286,7 +286,7 @@
    makeobj))
 
 
-;; @deffn {Procedure} ccode->bstructs-sexp code => sexp
+;; @deffn {Procedure} ccode->bstructs-sexp code [attrs] => sexp
 ;; Convert @var{ccode}, a string of C code, to a s-expression of
 ;; @emph{bstructs} code, for use in Guile.  For example,
 ;; @example
@@ -298,9 +298,11 @@
 ;;   (define-bstruct struct-foo* (* struct-foo))
 ;;   (export struct-foo struct-foo*))
 ;; @end example
+;; See nyacc documentation for @code{ccode->sexp} to obtain information
+;; on the @var{attrs} argument.
 ;; @end deffn
 (define* (ccode->bstructs-sexp ccode #:optional (attrs '()))
-  "- Procedure: ccode->bstructs-sexp code => sexp
+  "- Procedure: ccode->bstructs-sexp code [attrs] => sexp
      Convert CCODE, a string of C code, to a s-expression of _bstructs_
      code, for use in Guile.  For example,
           (use-modules (fhbe bstructs))
@@ -309,7 +311,9 @@
           (begin
             (define-bstruct struct-foo (struct (i int) (d double)))
             (define-bstruct struct-foo* (* struct-foo))
-            (export struct-foo struct-foo*))"
+            (export struct-foo struct-foo*))
+     See nyacc documentation for ‘ccode->sexp’ to obtain information on
+     the ATTRS argument."
   (parameterize ((*fh-backend* backend)
                  (*mod* (make-fresh-user-module)))
     (let ((mod (*mod*)))

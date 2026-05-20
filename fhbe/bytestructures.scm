@@ -161,7 +161,7 @@
    (lambda* (type #:optional value)
      (if value `(bytestructure ,type ,value) `(bytestructure ,type)))))
 
-;; @deffn {Procedure} ccode->bstructs-sexp code [attrs] => sexp
+;; @deffn {Procedure} ccode->bytestructures-sexp code [attrs] => sexp
 ;; Convert @var{ccode}, a string of C code, to a s-expression of
 ;; @emph{bstructs} code, for use in Guile.  For example,
 ;; @example
@@ -173,9 +173,11 @@
 ;;   (define struct-foo* (bs:pointer struct-foo))
 ;;   (export struct-foo struct-foo*))
 ;; @end example
+;; See nyacc documentation for @code{ccode->sexp} to obtain information
+;; on the @var{attrs} argument.
 ;; @end deffn
 (define* (ccode->bytestructures-sexp ccode #:optional (attrs '()))
-  "- Procedure: ccode->bstructs-sexp code => sexp
+  "- Procedure: ccode->bytestructures-sexp code [attrs] => sexp
      Convert CCODE, a string of C code, to a s-expression of _bstructs_
      code, for use in Guile.  For example,
           (use-modules (fhbe bytestructures))
@@ -184,7 +186,9 @@
           (begin
             (define struct-foo (bs:struct (list `(i ,int) `(d ,double))))
             (define struct-foo* (bs:pointer struct-foo))
-            (export struct-foo struct-foo*))"
+            (export struct-foo struct-foo*))
+     See nyacc documentation for ‘ccode->sexp’ to obtain information on
+     the ATTRS argument."
   (parameterize ((*fh-backend* backend))
     (ccode->sexp ccode attrs)))
 
