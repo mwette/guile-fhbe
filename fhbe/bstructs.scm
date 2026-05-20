@@ -42,7 +42,6 @@
   #:use-module (bstructs)
   #:use-module (ice-9 match)
   #:use-module ((system foreign) #:prefix ffi:)
-  #:use-module (nyacc lang c99 ffi-utils)
   #:use-module (nyacc lang c99 ffi-help))
 
 (use-modules (ice-9 pretty-print))
@@ -281,7 +280,7 @@
              ((s8) (cbase 'int8_t)) ((u8) (cbase 'uint8_t))
              ((s16) (cbase 'int16_t)) ((u16) (cbase 'uint16_t))
              ((s32) (cbase 'int32_t)) ((u32) (cbase 'uint32_t))
-             ((s64) (cbase 'int64_t)) ((u32) (cbase 'uint64_t)))
+             ((s64) (cbase 'int64_t)) ((u64) (cbase 'uint64_t)))
            (cbase 'int))))
    deftype
    makeobj))
