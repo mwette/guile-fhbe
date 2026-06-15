@@ -1,3 +1,5 @@
+THIS WORK IS DEPRECATED
+
 # guile-fhbe - work in progress
 alternate backends for nyacc ffi-helper
 
