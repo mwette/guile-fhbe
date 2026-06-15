@@ -1,4 +1,5 @@
 THIS WORK IS DEPRECATED
+the code will be included in nyacc's examples directory
 
 # guile-fhbe - work in progress
 alternate backends for nyacc ffi-helper
